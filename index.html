@@ -116,6 +116,44 @@
             font-size: 12px;
             margin-left: auto;
         }
+        .navigation-box {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            right: 0;
+            background: #388e3c;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 1002;
+            display: none;
+            min-height: 80px;
+            text-align: center;
+        }
+        .navigation-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        .navigation-text {
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .navigation-distance {
+            font-size: 14px;
+            color: #dcedc8;
+        }
+        .route-summary {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 14px;
+            z-index: 1000;
+        }
         .current-location {
             position: absolute;
             top: 20px;
@@ -131,6 +169,17 @@
             font-weight: 500;
         }
         .current-location:hover { background: #1557b0; }
+        .mode-toggle {
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            z-index: 1001;
+            background: #fff;
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
         @media (max-width: 600px) {
             .current-location {
                 top: 10px;
@@ -139,8 +188,16 @@
                 font-size: 14px;
             }
             .search-container {
-                top: 60px;
+                top: 70px;
                 width: 95%;
+            }
+            .navigation-box {
+                top: 10px;
+                padding: 10px 12px;
+            }
+            .mode-toggle {
+                top: 50px;
+                left: 10px;
             }
         }
         @media (hover: none) {
@@ -152,6 +209,7 @@
 <body>
     <div id="map"></div>
     <button class="current-location" onclick="getCurrentLocation()">現在地を使用</button>
+    <button id="mode-toggle" class="mode-toggle" onclick="toggleMode()">パネルモード</button>
     <div class="search-container" id="search-container">
         <div class="flex flex-col gap-2 mb-2">
             <div class="relative">
@@ -178,12 +236,17 @@
         <ul id="instructions" class="text-sm text-gray-600"></ul>
         <button onclick="exitNavigation()" class="button mt-4 w-full">ナビ終了</button>
     </div>
+    <div id="navigation-box" class="navigation-box"></div>
+    <div id="route-summary-bottom" class="route-summary"></div>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         // ORS APIキー（CodePenでは直接記載しない！ローカルまたはサーバーで管理）
         const apiKey = '5b3ce3597851110001cf6248971ea2d628e74c31a7db0572d1dbc101'; // https://openrouteservice.org/ で取得したキーを入力
+
+        // 歩行速度（m/分）
+        const WALKING_SPEED = 80;
 
         // 地図の初期化
         const map = L.map('map').setView([35.6762, 139.6503], 13); // デフォルト：東京
@@ -194,6 +257,7 @@
         let routeLayer = null;
         let currentLocationMarker = null;
         let isNavigating = false;
+        let navigationMode = false;
 
         // 現在地の取得
         function getCurrentLocation() {
@@ -209,12 +273,12 @@
                     if (currentLocationMarker) {
                         map.removeLayer(currentLocationMarker);
                     }
-                    currentLocationMarker = L.circleMarker([lat, lon], {
-                        radius: 8,
-                        fillColor: '#1a73e8',
-                        color: '#fff',
-                        weight: 2,
-                        fillOpacity: 1
+                    currentLocationMarker = L.marker([lat, lon], {
+                        icon: L.divIcon({
+                            className: 'current-location-icon',
+                            html: '<div style="background: #1a73e8; border-radius: 50%; width: 16px; height: 16px; border: 3px solid #fff; box-shadow: 0 0 4px rgba(0,0,0,0.3);"></div>',
+                            iconSize: [16, 16]
+                        })
                     }).addTo(map);
                     map.setView([lat, lon], 15);
                 },
@@ -222,6 +286,28 @@
                     alert('現在地を取得できませんでした: ' + error.message);
                 }
             );
+        }
+
+        // モード切替
+        function toggleMode() {
+            navigationMode = !navigationMode;
+            document.getElementById('mode-toggle').textContent = navigationMode ? 'ナビモード' : 'パネルモード';
+            updateNavigationDisplay();
+        }
+
+        // ナビゲーション表示の更新
+        function updateNavigationDisplay() {
+            const directions = document.getElementById('directions');
+            const navigationBox = document.getElementById('navigation-box');
+            if (navigationMode) {
+                directions.style.display = 'none';
+                navigationBox.style.display = 'block';
+                document.getElementById('search-container').classList.add('hidden');
+            } else {
+                directions.style.display = 'block';
+                navigationBox.style.display = 'none';
+                if (!isNavigating) document.getElementById('search-container').classList.remove('hidden');
+            }
         }
 
         // オートコンプリート（ORS Pelias API）
@@ -347,41 +433,45 @@
                 }).addTo(map);
                 map.fitBounds(routeLayer.getBounds());
 
-                // ルート概要（距離、所要時間）
-                const summary = document.getElementById('route-summary');
-                const distance = (routeData.features[0].properties.summary.distance / 1000).toFixed(1);
-                const duration = Math.round(routeData.features[0].properties.summary.duration / 60);
-                summary.textContent = `距離: ${distance}km | 所要時間: ${duration}分`;
+                // ルート概要（歩行速度80m/分で再計算）
+                const totalDistance = routeData.features[0].properties.summary.distance;
+                const customDuration = Math.ceil(totalDistance / WALKING_SPEED);
+                document.getElementById('route-summary').textContent = `距離: ${(totalDistance / 1000).toFixed(1)}km | 所要時間: ${customDuration}分`;
+                document.getElementById('route-summary-bottom').textContent = `${(totalDistance / 1000).toFixed(1)}km - ${customDuration}:${(customDuration % 60).toString().padStart(2, '0')}`;
 
-                // 案内を表示（Google Maps風）
-                const instructionsList = document.getElementById('instructions');
-                instructionsList.innerHTML = '';
-                if (routeData.features && routeData.features[0].properties && routeData.features[0].properties.segments) {
-                    routeData.features[0].properties.segments.forEach(segment => {
-                        segment.steps.forEach((step, index) => {
-                            const li = document.createElement('li');
-                            li.className = `step-card ${index === 0 && start === '現在地' ? 'active' : ''}`;
-                            const icon = getStepIcon(step.type);
-                            const distance = (step.distance / 1000).toFixed(1);
-                            const duration = Math.round(step.duration / 60);
-                            li.innerHTML = `
-                                <span class="step-icon">${icon}</span>
-                                <span class="step-info">${step.instruction}</span>
-                                <span class="step-distance">${distance}km, ${duration}分</span>
-                            `;
-                            instructionsList.appendChild(li);
-                        });
-                    });
+                // 案内を表示
+                updateNavigationDisplay();
+                if (navigationMode) {
+                    updateNavigationBox(routeData.features[0].properties.segments[0].steps[0], (totalDistance / 1000).toFixed(1), customDuration);
                 } else {
-                    instructionsList.innerHTML = '<li class="step-card">案内情報が利用できません</li>';
+                    const instructionsList = document.getElementById('instructions');
+                    instructionsList.innerHTML = '';
+                    if (routeData.features && routeData.features[0].properties && routeData.features[0].properties.segments) {
+                        routeData.features[0].properties.segments.forEach(segment => {
+                            segment.steps.forEach((step, index) => {
+                                const li = document.createElement('li');
+                                li.className = `step-card ${index === 0 && start === '現在地' ? 'active' : ''}`;
+                                const icon = getStepIcon(step.type);
+                                const stepDistance = (step.distance / 1000).toFixed(1);
+                                const stepDuration = Math.ceil(step.distance / WALKING_SPEED);
+                                li.innerHTML = `
+                                    <span class="step-icon">${icon}</span>
+                                    <span class="step-info">${step.instruction}</span>
+                                    <span class="step-distance">${stepDistance}km, ${stepDuration}分</span>
+                                `;
+                                instructionsList.appendChild(li);
+                            });
+                        });
+                    } else {
+                        instructionsList.innerHTML = '<li class="step-card">案内情報が利用できません</li>';
+                    }
                 }
 
                 // ナビゲーション開始
                 isNavigating = true;
                 document.getElementById('search-container').classList.add('hidden');
-                document.getElementById('directions').style.display = 'block';
 
-                // 現在地の追跡（ナビゲーション中）
+                // 現在地の追跡
                 if (start === '現在地' && navigator.geolocation) {
                     navigator.geolocation.watchPosition(
                         (position) => {
@@ -390,17 +480,16 @@
                             if (currentLocationMarker) {
                                 map.removeLayer(currentLocationMarker);
                             }
-                            currentLocationMarker = L.circleMarker([lat, lon], {
-                                radius: 8,
-                                fillColor: '#1a73e8',
-                                color: '#fff',
-                                weight: 2,
-                                fillOpacity: 1
+                            currentLocationMarker = L.marker([lat, lon], {
+                                icon: L.divIcon({
+                                    className: 'current-location-icon',
+                                    html: '<div style="background: #1a73e8; border-radius: 50%; width: 16px; height: 16px; border: 3px solid #fff; box-shadow: 0 0 4px rgba(0,0,0,0.3);"></div>',
+                                    iconSize: [16, 16]
+                                })
                             }).addTo(map);
-                            if (isNavigating) {
-                                map.panTo([lat, lon]);
-                                // ステップのハイライト更新（簡易実装）
-                                updateStepHighlight(lat, lon, routeData.features[0].properties.segments);
+                            map.setView([lat, lon], 15);
+                            if (navigationMode) {
+                                updateNavigationBoxBasedOnLocation(routeData.features[0].properties.segments, lat, lon);
                             }
                         },
                         (error) => {
@@ -415,7 +504,7 @@
             }
         }
 
-        // ステップのアイコンを取得（簡易実装）
+        // ステップのアイコンを取得
         function getStepIcon(type) {
             switch (type) {
                 case 0: return '→'; // 直進
@@ -426,13 +515,38 @@
             }
         }
 
-        // ステップのハイライト更新（簡易実装）
-        function updateStepHighlight(lat, lon, segments) {
-            const steps = document.querySelectorAll('.step-card');
-            steps.forEach((step, index) => {
-                step.classList.remove('active');
-                if (index === 0) step.classList.add('active'); // 最初のステップを仮ハイライト
-            });
+        // ナビゲーションボックスの更新
+        function updateNavigationBox(step, totalDistance, totalDuration) {
+            const box = document.getElementById('navigation-box');
+            const icon = getNavigationIcon(step.type);
+            const stepDistance = (step.distance / 1000).toFixed(1);
+            const stepDuration = Math.ceil(step.distance / WALKING_SPEED);
+            box.innerHTML = `
+                <div class="navigation-icon">${icon}</div>
+                <div class="navigation-text">${step.instruction}</div>
+                <div class="navigation-distance">${stepDistance}km - ${stepDuration}分</div>
+            `;
+            box.style.display = 'block';
+        }
+
+        // ナビゲーションボックスの位置ベース更新（簡易実装）
+        function updateNavigationBoxBasedOnLocation(segments, lat, lon) {
+            const steps = segments.flatMap(segment => segment.steps);
+            const currentStep = steps.find(step => {
+                return Math.abs(step.way_points[0][0] - lat) < 0.01 && Math.abs(step.way_points[0][1] - lon) < 0.01;
+            }) || steps[0];
+            updateNavigationBox(currentStep, (segments[0].distance / 1000).toFixed(1), Math.ceil(segments[0].distance / WALKING_SPEED));
+        }
+
+        // ナビゲーションアイコンを取得
+        function getNavigationIcon(type) {
+            switch (type) {
+                case 0: return '↑'; // 直進
+                case 1: return '↗'; // 右折
+                case 2: return '↖'; // 左折
+                case 10: return '🏁'; // 到着
+                default: return '→';
+            }
         }
 
         // ナビゲーション終了
@@ -440,12 +554,14 @@
             isNavigating = false;
             document.getElementById('search-container').classList.remove('hidden');
             document.getElementById('directions').style.display = 'none';
+            document.getElementById('navigation-box').style.display = 'none';
             if (routeLayer) {
                 map.removeLayer(routeLayer);
                 routeLayer = null;
             }
             document.getElementById('instructions').innerHTML = '';
             document.getElementById('route-summary').textContent = '';
+            document.getElementById('route-summary-bottom').textContent = '';
             map.setView([35.6762, 139.6503], 13); // デフォルトビューにリセット
         }
 

@@ -68,30 +68,85 @@
         .autocomplete-item:hover { background: #f1f3f4; }
         .directions-panel {
             position: absolute;
-            bottom: 20px;
-            left: 20px;
-            right: 20px;
-            max-width: 400px;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 60vh;
+            max-height: 400px;
             background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
             padding: 16px;
             z-index: 1000;
             display: none;
+            overflow-y: auto;
+        }
+        .directions-header {
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 12px;
+            margin-bottom: 12px;
+        }
+        .step-card {
+            display: flex;
+            align-items: center;
+            background: #f1f3f4;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: border-left 0.2s;
+        }
+        .step-card.active {
+            border-left: 4px solid #1a73e8;
+            background: #e8f0fe;
+        }
+        .step-icon {
+            width: 24px;
+            height: 24px;
+            margin-right: 12px;
+            color: #1a73e8;
+        }
+        .step-info {
+            flex: 1;
+        }
+        .step-distance {
+            color: #555;
+            font-size: 12px;
+            margin-left: auto;
         }
         .current-location {
             position: absolute;
             top: 20px;
             left: 20px;
-            z-index: 1000;
+            z-index: 1001;
             background: #1a73e8;
             color: white;
-            padding: 8px 12px;
-            border-radius: 4px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
             cursor: pointer;
-            font-size: 14px;
+            font-size: 16px;
+            font-weight: 500;
         }
         .current-location:hover { background: #1557b0; }
+        @media (max-width: 600px) {
+            .current-location {
+                top: 10px;
+                left: 10px;
+                padding: 10px 14px;
+                font-size: 14px;
+            }
+            .search-container {
+                top: 60px;
+                width: 95%;
+            }
+        }
+        @media (hover: none) {
+            .current-location:hover { background: #1a73e8; }
+            .button:hover { background: #1a73e8; }
+        }
     </style>
 </head>
 <body>
@@ -116,7 +171,10 @@
         </div>
     </div>
     <div id="directions" class="directions-panel">
-        <h2 class="text-lg font-medium text-gray-800 mb-4">ナビゲーション</h2>
+        <div class="directions-header">
+            <h2 class="text-lg font-medium text-gray-800">ナビゲーション</h2>
+            <p id="route-summary" class="text-sm text-gray-600"></p>
+        </div>
         <ul id="instructions" class="text-sm text-gray-600"></ul>
         <button onclick="exitNavigation()" class="button mt-4 w-full">ナビ終了</button>
     </div>
@@ -124,8 +182,8 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // ORS APIキー（ここに貼り付け）
-        const apiKey = '5b3ce3597851110001cf6248971ea2d628e74c31a7db0572d1dbc101'; // https://openrouteservice.org/ で取得
+        // ORS APIキー（CodePenでは直接記載しない！ローカルまたはサーバーで管理）
+        const apiKey = '5b3ce3597851110001cf6248971ea2d628e74c31a7db0572d1dbc101'; // https://openrouteservice.org/ で取得したキーを入力
 
         // 地図の初期化
         const map = L.map('map').setView([35.6762, 139.6503], 13); // デフォルト：東京
@@ -178,7 +236,7 @@
                     headers: { 'Authorization': apiKey }
                 });
                 if (!response.ok) {
-                    throw new Error('オートコンプリートAPIエラー: ' + response.statusText);
+                    throw new Error(`オートコンプリートAPIエラー: ${response.status} ${response.statusText}`);
                 }
                 const data = await response.json();
                 const suggestions = document.getElementById(suggestionsId);
@@ -223,7 +281,7 @@
                     headers: { 'Authorization': apiKey }
                 });
                 if (!response.ok) {
-                    throw new Error('ジオコーディングAPIエラー: ' + response.statusText);
+                    throw new Error(`ジオコーディングAPIエラー: ${response.status} ${response.statusText}`);
                 }
                 const data = await response.json();
                 if (data.features.length > 0) {
@@ -256,7 +314,7 @@
                     endpoint = 'https://api.openrouteservice.org/v2/directions/public-transport';
                 }
 
-                // ルート取得
+                // ルート取得（案内含む）
                 const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: {
@@ -274,7 +332,7 @@
                         document.getElementById('mode').value = 'foot-walking';
                         return findRoute(); // 徒歩でリトライ
                     }
-                    throw new Error('ルートAPIエラー: ' + response.statusText);
+                    throw new Error(`ルートAPIエラー: ${response.status} ${response.statusText}`);
                 }
                 const routeData = await response.json();
 
@@ -289,35 +347,34 @@
                 }).addTo(map);
                 map.fitBounds(routeLayer.getBounds());
 
-                // 案内取得
-                const directionsEndpoint = `https://api.openrouteservice.org/v2/directions/${mode === 'public-transport' ? 'foot-walking' : mode}`;
-                const directionsResponse = await fetch(directionsEndpoint, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': apiKey,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        coordinates: [startCoords.reverse(), endCoords.reverse()],
-                        instructions: true
-                    })
-                });
-                if (!directionsResponse.ok) {
-                    throw new Error('案内APIエラー: ' + directionsResponse.statusText);
-                }
-                const directionsData = await directionsResponse.json();
+                // ルート概要（距離、所要時間）
+                const summary = document.getElementById('route-summary');
+                const distance = (routeData.features[0].properties.summary.distance / 1000).toFixed(1);
+                const duration = Math.round(routeData.features[0].properties.summary.duration / 60);
+                summary.textContent = `距離: ${distance}km | 所要時間: ${duration}分`;
 
-                // 案内を表示
+                // 案内を表示（Google Maps風）
                 const instructionsList = document.getElementById('instructions');
                 instructionsList.innerHTML = '';
-                directionsData.routes[0].segments.forEach(segment => {
-                    segment.steps.forEach(step => {
-                        const li = document.createElement('li');
-                        li.innerHTML = step.instruction;
-                        li.className = 'mb-2';
-                        instructionsList.appendChild(li);
+                if (routeData.features && routeData.features[0].properties && routeData.features[0].properties.segments) {
+                    routeData.features[0].properties.segments.forEach(segment => {
+                        segment.steps.forEach((step, index) => {
+                            const li = document.createElement('li');
+                            li.className = `step-card ${index === 0 && start === '現在地' ? 'active' : ''}`;
+                            const icon = getStepIcon(step.type);
+                            const distance = (step.distance / 1000).toFixed(1);
+                            const duration = Math.round(step.duration / 60);
+                            li.innerHTML = `
+                                <span class="step-icon">${icon}</span>
+                                <span class="step-info">${step.instruction}</span>
+                                <span class="step-distance">${distance}km, ${duration}分</span>
+                            `;
+                            instructionsList.appendChild(li);
+                        });
                     });
-                });
+                } else {
+                    instructionsList.innerHTML = '<li class="step-card">案内情報が利用できません</li>';
+                }
 
                 // ナビゲーション開始
                 isNavigating = true;
@@ -342,6 +399,8 @@
                             }).addTo(map);
                             if (isNavigating) {
                                 map.panTo([lat, lon]);
+                                // ステップのハイライト更新（簡易実装）
+                                updateStepHighlight(lat, lon, routeData.features[0].properties.segments);
                             }
                         },
                         (error) => {
@@ -356,6 +415,26 @@
             }
         }
 
+        // ステップのアイコンを取得（簡易実装）
+        function getStepIcon(type) {
+            switch (type) {
+                case 0: return '→'; // 直進
+                case 1: return '↗'; // 右折
+                case 2: return '↖'; // 左折
+                case 10: return '🏁'; // 到着
+                default: return '➡';
+            }
+        }
+
+        // ステップのハイライト更新（簡易実装）
+        function updateStepHighlight(lat, lon, segments) {
+            const steps = document.querySelectorAll('.step-card');
+            steps.forEach((step, index) => {
+                step.classList.remove('active');
+                if (index === 0) step.classList.add('active'); // 最初のステップを仮ハイライト
+            });
+        }
+
         // ナビゲーション終了
         function exitNavigation() {
             isNavigating = false;
@@ -366,6 +445,7 @@
                 routeLayer = null;
             }
             document.getElementById('instructions').innerHTML = '';
+            document.getElementById('route-summary').textContent = '';
             map.setView([35.6762, 139.6503], 13); // デフォルトビューにリセット
         }
 
